@@ -1,0 +1,7 @@
+[build-system]
+requires = [
+    "setuptools>=42",
+    "protobuf>=3.6.0",
+    "wheel"
+]
+build-backend = "setuptools.build_meta"
