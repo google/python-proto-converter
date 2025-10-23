@@ -49,7 +49,8 @@ class ProtoConverter(object):
   def __init__(self,
                pb_class_from: Type[FROM],
                pb_class_to: Type[TO],
-               field_names_to_ignore: Optional[List[str]] = None):
+               field_names_to_ignore: Optional[List[str]] = None,
+               raise_exception_on_unhandled_destination_fields: bool = False):
     """Constructor for the ProtoConverter.
 
     Args:
@@ -57,6 +58,10 @@ class ProtoConverter(object):
       pb_class_to: the init method for the proto to convert to.
       field_names_to_ignore: the fields from the source proto that will be
         ignored by the converter.
+      raise_exception_on_unhandled_destination_fields: raise exception if
+        there are fields from the pb_class_to that are not mapped from the
+        pb_class_from proto. By default the unmapped fields in the pb_class_to
+        will be set to empty during conversion.
 
     Returns:
       ProtoConverter
@@ -73,6 +78,7 @@ class ProtoConverter(object):
     self._pb_class_from = pb_class_from
     self._pb_class_to = pb_class_to
     self._field_names_to_ignore = field_names_to_ignore
+    self._raise_exception_on_unhandled_destination_fields = raise_exception_on_unhandled_destination_fields
     self._function_convert_field_names = []  # type: List[str]
     self._convert_functions = []  # type: List[Callable]
 
@@ -114,6 +120,16 @@ class ProtoConverter(object):
           "Fields can't be automatically converted, must either be explicitly "
           "handled or explicitly ignored. Unhandled fields: {}.".format(
               unconverted_fields))
+    
+    if self._raise_exception_on_unhandled_destination_fields:
+      unhandled_dest_fields = set(dest_proto_fields_by_name) - set(
+          self._pb_class_from.DESCRIPTOR.fields_by_name) - set(
+              self._function_convert_field_names)
+      if unhandled_dest_fields:
+        raise NotImplementedError(
+            "Destination proto contains fields that don't exist in "
+            "the Source proto. Unhandled fields: {}".format(
+                unhandled_dest_fields))
 
   def convert(self, src_proto: FROM) -> TO:
     """Converts the src_proto(pb_class_from) to the converter's pb_class_to."""
@@ -138,7 +154,8 @@ class ProtoConverter(object):
 
     for src_field_descriptor, src_field in src_proto.ListFields():
       if (src_field_descriptor.name in self._field_names_to_ignore or
-          src_field_descriptor.name in self._unconverted_fields):
+          src_field_descriptor.name in self._unconverted_fields or 
+          src_field_descriptor.is_extension):
         continue
 
       dest_field_descriptor = dest_proto.DESCRIPTOR.fields_by_name[
@@ -162,8 +179,7 @@ class ProtoConverter(object):
           dest_field.MergeFrom(src_field)
 
       # Array Case
-      elif (src_field_descriptor.label ==
-            descriptor.FieldDescriptor.LABEL_REPEATED):
+      elif src_field_descriptor.is_repeated:
         # Any[] -> Any[], MergeFrom doesn't work for Any[]
         # Any[] -> Proto[] shouldn't happen
         if _is_any_field(src_field_descriptor):
@@ -233,7 +249,7 @@ def _is_src_field_auto_convertible(src_field,
   dest_field = dest_proto_fields_by_name[src_field.name]
 
   # Check field type and repeated label matching.
-  if dest_field.label != src_field.label or src_field.type != dest_field.type:
+  if dest_field.is_repeated != src_field.is_repeated or src_field.type != dest_field.type
     return False
 
   if _is_map_field(src_field):
@@ -261,6 +277,8 @@ def _is_src_field_auto_convertible(src_field,
 
     if src_field.message_type != dest_field.message_type:
       return False
+  elif src_field.type == descriptor.FieldDescriptor.TYPE_ENUM:
+    return src_field.enum_type.name == dest_field.enum_type.name
 
   return True
 
@@ -347,7 +365,7 @@ def _is_any_field(field_descriptor) -> bool:
 
 
 def _is_map_field(field_descriptor) -> bool:
-  return (field_descriptor.label == descriptor.FieldDescriptor.LABEL_REPEATED
+  return (field_descriptor.is_repeated
           and
           field_descriptor.type == descriptor.FieldDescriptor.TYPE_MESSAGE and
           field_descriptor.message_type.has_options and
