@@ -249,7 +249,7 @@ def _is_src_field_auto_convertible(src_field,
   dest_field = dest_proto_fields_by_name[src_field.name]
 
   # Check field type and repeated label matching.
-  if dest_field.is_repeated != src_field.is_repeated or src_field.type != dest_field.type
+  if dest_field.is_repeated != src_field.is_repeated or src_field.type != dest_field.type:
     return False
 
   if _is_map_field(src_field):
